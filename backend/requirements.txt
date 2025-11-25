@@ -1,0 +1,8 @@
+django
+django-cors-headers
+openai
+pandas
+plotly
+python-dotenv
+numpy<2
+statsmodels
