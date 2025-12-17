@@ -10,6 +10,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import plotly.express as px
 from .models import Message, Conversation
+from .analytics import ANALYSIS_TOOLS, run_analysis
 
 load_dotenv()
 
@@ -56,10 +57,26 @@ def get_schema():
         schema_str += ", ".join(col_names) + "\n\n"
     return schema_str
 
+# Helper function to build conversation input for Responses API
+def build_conversation_input(system_prompt, history, user_query):
+    """
+    Builds the input array for GPT-5.2 Responses API with conversation history.
+    """
+    input_items = [{"role": "developer", "content": system_prompt}]
+    
+    # Add conversation history
+    for msg in history:
+        role = "assistant" if msg.role == "ai" else "user"
+        input_items.append({"role": role, "content": msg.content})
+    
+    input_items.append({"role": "user", "content": user_query})
+    return input_items
+
+
 # STEP 2
 def generate_sql(query, schema, history, error_history=None):
     """
-    Asks the LLM to generate a SQL query based on the user's question and DB schema.
+    Uses GPT-5.2 with reasoning to generate a SQL query based on the user's question and DB schema.
     """
     system_prompt = f"""
     You are a SQL expert. Your ONLY purpose is to convert the user's natural language question into a valid SQL query for a SQLite database.
@@ -81,29 +98,39 @@ def generate_sql(query, schema, history, error_history=None):
     3. The database contains tables: products, customers, orders, order_items.
     4. Use JOINs correctly to connect tables.
     5. 'sales' usually refers to the sum of 'amount' in 'order_items'.
+    
+    Think through the query step by step to ensure correctness.
     """
     
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    # Add conversation history
-    for msg in history:
-        role = "assistant" if msg.role == "ai" else "user"
-        messages.append({"role": role, "content": msg.content})
-    
-    messages.append({"role": "user", "content": query})
-    
+    # Build input with error history if present
+    full_query = query
     if error_history:
+        error_context = "\n\nPrevious attempts that failed:\n"
         for attempt in error_history:
-            messages.append({"role": "assistant", "content": attempt['sql']})
-            messages.append({"role": "user", "content": f"The previous query failed with error: {attempt['error']}. Please fix it."})
+            error_context += f"- SQL: {attempt['sql']}\n  Error: {attempt['error']}\n"
+        error_context += "\nPlease fix the query based on these errors."
+        full_query = query + error_context
     
-    response = client.chat.completions.create(
-        model="gpt-5.1",
-        messages=messages,
-        temperature=0
+    input_items = build_conversation_input(system_prompt, history, full_query)
+    
+    # Use GPT-5.2 with low reasoning for SQL generation (fast but thoughtful)
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=input_items,
+        reasoning={"effort": "low"},
+        text={"verbosity": "low"}
     )
     
-    return response.choices[0].message.content.strip()
+    # Extract text output from GPT-5.2 response
+    result = ""
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if content.type == "output_text":
+                    result = content.text
+                    break
+    
+    return result.strip()
 
 # STEP 3
 def execute_sql(sql):
@@ -122,37 +149,106 @@ def execute_sql(sql):
 # STEP 4
 def generate_summary(df_head_csv, user_query, history):
     """
-    Asks the LLM to generate a brief natural language summary of the data.
+    Uses GPT-5.2 with HIGH reasoning to generate insightful business interpretations.
+    Always provides thoughtful analysis, not just data descriptions.
     """
-    system_prompt = "You are a helpful Data Analyst. Answer the user's question based on the provided data snippet. Be concise (1-2 sentences). If you suggest code, ONLY use Python and Plotly Express (no R/ggplot)."
+    system_prompt = """
+    You are an expert business analyst presenting data insights to a business owner.
     
-    messages = [{"role": "system", "content": system_prompt}]
+    Your job is to:
+    1. Answer their question directly based on the data
+    2. Highlight what's interesting or noteworthy in the results
+    3. Point out any patterns, outliers, or business implications
+    4. If relevant, suggest what action they might consider
     
-    # Add conversation history
-    for msg in history:
-        role = "assistant" if msg.role == "ai" else "user"
-        messages.append({"role": role, "content": msg.content})
-        
+    Think deeply about what the data means for their business.
+    Speak directly to them. Be insightful but concise (3-4 sentences).
+    Use phrases like "Your data shows...", "Notably...", "This suggests..."
+    """
+    
     user_prompt = f"""
     User Question: {user_query}
-    Data (first 5 rows):
+    
+    Data Results:
     {df_head_csv}
     
-    Provide a brief answer/summary.
+    Provide a thoughtful interpretation of this data for the business owner.
     """
-    messages.append({"role": "user", "content": user_prompt})
     
-    response = client.chat.completions.create(
-        model="gpt-5.1",
-        messages=messages,
-        temperature=0
+    input_items = build_conversation_input(system_prompt, history, user_prompt)
+    
+    # Use GPT-5.2 with HIGH reasoning - always give thoughtful insights
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=input_items,
+        reasoning={"effort": "high"},
+        text={"verbosity": "medium"}
     )
     
-    return response.choices[0].message.content.strip()
+    # Extract text output
+    result = ""
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if content.type == "output_text":
+                    result = content.text
+                    break
+    
+    return result.strip()
 
-def generate_viz_code(df_head_csv, user_query, history):
+
+def generate_insights_summary(user_query, insights_data, history):
     """
-    Asks the LLM to generate Python code using Plotly Express to visualize the data.
+    Uses GPT-5.2 with high reasoning to generate a natural language summary 
+    of advanced analytics results, tailored for business owners.
+    """
+    system_prompt = """
+    You are an expert business analyst presenting insights to a business owner.
+    
+    Your job is to:
+    1. Summarize the key findings in plain, non-technical language
+    2. Highlight the most actionable insights
+    3. Connect findings to business impact
+    4. Keep it concise but impactful (3-5 sentences)
+    
+    Think deeply about what matters most to the business owner.
+    Speak directly to them. Use phrases like "Your data shows...", "I recommend...", "This means..."
+    """
+    
+    user_prompt = f"""
+    User Question: {user_query}
+    
+    Analysis Results:
+    {json.dumps(insights_data, indent=2, default=str)}
+    
+    Provide a business-friendly summary of these findings.
+    """
+    
+    input_items = build_conversation_input(system_prompt, history, user_prompt)
+    
+    # Use GPT-5.2 with HIGH reasoning for deep business insights
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=input_items,
+        reasoning={"effort": "high"},
+        text={"verbosity": "medium"}
+    )
+    
+    # Extract text output
+    result = ""
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if content.type == "output_text":
+                    result = content.text
+                    break
+    
+    return result.strip()
+
+def generate_viz_code(df_head_csv, user_query, history, analysis_context=None):
+    """
+    Uses GPT-5.2 with MEDIUM reasoning to generate Python visualization code.
+    Can optionally receive analysis context to create visualizations that explain analysis results.
     """
     system_prompt = """
     You are a Python data visualization expert.
@@ -169,8 +265,13 @@ def generate_viz_code(df_head_csv, user_query, history):
     2. The function MUST be named `generate_plot`.
     3. It MUST return `fig.to_json()`.
     4. Do NOT include any imports inside the generated code (assume `import plotly.express as px` is already done).
-    5. Return ONLY the Python code. No markdown.
-    6. Choose the best chart type (bar, line, scatter, pie) based on the data and user query.
+    5. Return ONLY the Python code. No markdown, no explanations.
+    6. Choose the BEST chart type (bar, line, scatter, pie, heatmap, etc.) based on the data and context.
+    
+    Think carefully about:
+    - What story does the data tell?
+    - What visualization would best communicate the insights?
+    - If analysis context is provided, how to visualize those findings?
     """
     
     user_prompt = f"""
@@ -178,26 +279,159 @@ def generate_viz_code(df_head_csv, user_query, history):
     
     Data Preview (first 5 rows):
     {df_head_csv}
-    
-    Write the `generate_plot(df)` function.
     """
     
-    messages = [{"role": "system", "content": system_prompt}]
+    # Add analysis context if provided (for post-analysis visualizations)
+    if analysis_context:
+        user_prompt += f"""
     
-    # Add conversation history
-    for msg in history:
-        role = "assistant" if msg.role == "ai" else "user"
-        messages.append({"role": role, "content": msg.content})
-        
-    messages.append({"role": "user", "content": user_prompt})
+    Analysis Context (this visualization should help explain these findings):
+    {analysis_context}
+    """
     
-    response = client.chat.completions.create(
-        model="gpt-5.1",
-        messages=messages,
-        temperature=0
+    user_prompt += "\n\nWrite the `generate_plot(df)` function. Return ONLY the code."
+    
+    input_items = build_conversation_input(system_prompt, history, user_prompt)
+    
+    # Use GPT-5.2 with MEDIUM reasoning - visualization choice matters
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=input_items,
+        reasoning={"effort": "medium"},
+        text={"verbosity": "low"}
     )
     
-    return response.choices[0].message.content.strip()
+    # Extract text output
+    result = ""
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if content.type == "output_text":
+                    result = content.text
+                    break
+    
+    return result.strip()
+
+
+def handle_advanced_analysis(tool_name, tool_args, df, user_query, history):
+    """
+    Execute an advanced analysis on the provided DataFrame.
+    Optionally generates a visualization with analysis context.
+    """
+    conn = get_db_connection()
+    
+    try:
+        # Run the selected analysis
+        result = run_analysis(tool_name, conn, **tool_args)
+        
+        if not result:
+            return None, "Analysis failed to produce results"
+        
+        # Generate business-friendly summary with HIGH reasoning
+        summary = generate_insights_summary(user_query, result.get('insights', {}), history)
+        
+        # Check if we need to generate additional visualization
+        # The analysis already includes charts, but we may want to add custom ones
+        charts = result.get('charts', [])
+        
+        return {
+            "analysis_type": tool_name,
+            "summary": summary,
+            "insights": result.get('insights', {}),
+            "charts": charts,
+            "data_preview": result.get('data_preview', [])
+        }, None
+        
+    except Exception as e:
+        return None, str(e)
+    finally:
+        conn.close()
+
+
+def should_run_deep_analysis(df, user_query, history):
+    """
+    Decides whether the data warrants deep analysis, simple visualization, or just text.
+    Uses GPT-5.2 with HIGH reasoning to make this important decision.
+    """
+    df_head = df.head().to_csv(index=False)
+    df_info = f"Rows: {len(df)}, Columns: {list(df.columns)}"
+    
+    system_prompt = """
+    You are an expert data analyst. Based on the user's question and the data retrieved,
+    decide whether to:
+    1. Run DEEP ANALYSIS - for questions needing insights, segmentation, patterns, recommendations
+    2. Show SIMPLE VISUALIZATION - for basic data display, counts, lists, simple comparisons
+    3. Return TEXT ONLY - for super simple follow-up questions that just need a quick text answer
+    
+    DEEP ANALYSIS is needed when the user asks about:
+    - Customer segmentation, best/worst customers, loyalty, at-risk customers → rfm_analysis
+    - Trend analysis, growth patterns, seasonality, forecasting → sales_trend_analysis
+    - Product performance, Pareto/80-20, what to focus on → product_performance_analysis
+    - Correlations, what affects sales, relationships → correlation_analysis
+    - Hidden patterns, key drivers, PCA → pca_analysis
+    - Customer clustering, personas, behavioral segments → customer_clustering
+    - Retention, cohorts, customer lifetime → cohort_analysis
+    - Geographic/regional performance → geographic_analysis
+    
+    SIMPLE VISUALIZATION is enough when user just wants to:
+    - See their data ("show me", "display", "I want to see")
+    - Basic aggregations without deeper meaning
+    - Simple comparisons or listings
+    
+    TEXT ONLY is best for:
+    - Super simple follow-up questions ("what was the total?", "how many?", "which one?")
+    - Quick clarifications about previous results
+    - Single-value answers (one number, one name, yes/no)
+    - Questions where a chart would be overkill
+    
+    Return ONLY a JSON object with:
+    {
+        "decision": "deep_analysis" or "simple_viz" or "text_only",
+        "tool": "tool_name if deep_analysis else null",
+        "reason": "brief explanation"
+    }
+    """
+    
+    user_prompt = f"""
+    User Question: {user_query}
+    
+    Data Retrieved:
+    {df_info}
+    
+    Sample Data:
+    {df_head}
+    
+    Should we run deep analysis or show a simple visualization?
+    """
+    
+    input_items = build_conversation_input(system_prompt, history, user_prompt)
+    
+    response = client.responses.create(
+        model="gpt-5.2",
+        input=input_items,
+        reasoning={"effort": "high"},
+        text={"verbosity": "low"}
+    )
+    
+    # Extract text output
+    result = ""
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if content.type == "output_text":
+                    result = content.text
+                    break
+    
+    # Parse the JSON response
+    try:
+        result = result.strip()
+        # Clean up potential markdown
+        result = result.replace("```json", "").replace("```", "").strip()
+        decision = json.loads(result)
+        return decision
+    except:
+        # Default to simple visualization if parsing fails
+        return {"decision": "simple_viz", "tool": None, "reason": "Fallback"}
 
 def safe_exec(code, df):
     """
@@ -273,9 +507,9 @@ def chat_view(request):
     # Save User Message
     Message.objects.create(conversation=conversation, role='user', content=user_query)
     
-    # [SECURITY/STABILITY STEP 5] Hallucination Mitigation
-    # We use a Retry Loop. If the SQL fails (e.g. wrong column name), we feed the error
-    # back to the AI so it can fix its own mistake.
+    # =========================================================================
+    # STEP 1: ALWAYS Generate and Execute SQL First
+    # =========================================================================
     error_history = []
     max_retries = 3
     sql_query = ""
@@ -285,17 +519,14 @@ def chat_view(request):
     for _ in range(max_retries):
         try:
             sql_query = generate_sql(user_query, schema, history, error_history)
-            # Clean up potential markdown if the LLM ignores instructions
             sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
             
             df, final_error = execute_sql(sql_query)
             
             if final_error:
-                # Add to history and retry
                 error_history.append({"sql": sql_query, "error": final_error})
                 continue
             else:
-                # Success
                 break
         except Exception as e:
             final_error = str(e)
@@ -317,38 +548,134 @@ def chat_view(request):
             "summary": "Query executed successfully but returned no results.",
             "plotly_json": None
         })
-        
-    # We send the head of the DF to the LLM to understand the structure
+    
+    # =========================================================================
+    # STEP 2: Decide - Deep Analysis or Simple Visualization?
+    # =========================================================================
     df_head = df.head().to_csv(index=False)
     data_headers = ",".join(df.columns.tolist())
     
     try:
-        # 5. Generate Natural Language Summary
+        decision = should_run_deep_analysis(df, user_query, history)
+        print(f"--- DEBUG: Analysis Decision ---")
+        print(f"Decision: {decision}")
+        print(f"--------------------------------")
+    except Exception as e:
+        print(f"Decision failed: {e}, defaulting to simple viz")
+        decision = {"decision": "simple_viz", "tool": None, "reason": "Fallback"}
+    
+    # =========================================================================
+    # STEP 3A: DEEP ANALYSIS PATH
+    # =========================================================================
+    if decision.get("decision") == "deep_analysis" and decision.get("tool"):
+        tool_name = decision["tool"]
+        tool_args = {"reason": decision.get("reason", "")}
+        
+        # For customer_clustering, provide n_clusters if not specified
+        # Use a reasonable default based on data size (3-6 clusters recommended)
+        if tool_name == "customer_clustering" and "n_clusters" not in tool_args:
+            # Determine optimal number of clusters based on customer count
+            customer_count = len(df) if not df.empty else 0
+            if customer_count < 50:
+                tool_args["n_clusters"] = 3
+            elif customer_count < 200:
+                tool_args["n_clusters"] = 4
+            else:
+                tool_args["n_clusters"] = 5
+        
+        analysis_result, analysis_error = handle_advanced_analysis(
+            tool_name, tool_args, df, user_query, history
+        )
+        
+        if analysis_result:
+            # Check if we need an additional visualization to explain the analysis
+            needs_extra_viz = not analysis_result.get('charts') or len(analysis_result['charts']) == 0
+            extra_plotly_json = None
+            
+            if needs_extra_viz:
+                # Generate visualization with analysis context
+                analysis_context = json.dumps(analysis_result.get('insights', {}), default=str)
+                viz_code = generate_viz_code(df_head, user_query, history, analysis_context)
+                viz_code = viz_code.replace("```python", "").replace("```", "").strip()
+                extra_plotly_json, _ = safe_exec(viz_code, df)
+                if extra_plotly_json:
+                    analysis_result['charts'].append(extra_plotly_json)
+            
+            Message.objects.create(
+                conversation=conversation,
+                role='ai',
+                content=analysis_result['summary'],
+                sql_executed=sql_query,
+                data_headers=data_headers
+            )
+            
+            return JsonResponse({
+                "conversation_id": str(conversation.id),
+                "analysis_type": tool_name,
+                "summary": analysis_result['summary'],
+                "insights": analysis_result['insights'],
+                "charts": analysis_result['charts'],
+                "data_preview": analysis_result['data_preview'],
+                "sql": sql_query,
+                "plotly_json": None  # Use charts array instead to avoid duplication
+            })
+        else:
+            print(f"Advanced analysis failed: {analysis_error}, falling back to simple viz")
+    
+    # =========================================================================
+    # STEP 3B: TEXT-ONLY PATH (for super simple follow-ups)
+    # =========================================================================
+    if decision.get("decision") == "text_only":
+        try:
+            summary_text = generate_summary(df_head, user_query, history)
+            
+            Message.objects.create(
+                conversation=conversation,
+                role='ai',
+                content=summary_text,
+                sql_executed=sql_query,
+                data_headers=data_headers
+            )
+            
+            return JsonResponse({
+                "conversation_id": str(conversation.id),
+                "sql": sql_query,
+                "summary": summary_text,
+                "plotly_json": None,
+                "text_only": True
+            })
+        except Exception as e:
+            print(f"Text-only response failed: {e}, falling back to simple viz")
+    
+    # =========================================================================
+    # STEP 3C: SIMPLE VISUALIZATION PATH
+    # =========================================================================
+    try:
+        # Generate insights summary (HIGH reasoning - always thoughtful)
         summary_text = generate_summary(df_head, user_query, history)
         
-        # 6. Generate Visualization
+        # Generate visualization (MEDIUM reasoning)
         viz_code = generate_viz_code(df_head, user_query, history)
         viz_code = viz_code.replace("```python", "").replace("```", "").strip()
         print(f"--- DEBUG: Generated Visualization Code ---\n{viz_code}\n-------------------------------------------")
         
         plotly_json, viz_error = safe_exec(viz_code, df)
         
-        # Structure preview
         data_structure = {
             "rows": len(df),
             "columns": [{"name": col, "type": str(dtype)} for col, dtype in df.dtypes.items()]
         }
 
         if viz_error:
-             Message.objects.create(
-                 conversation=conversation,
-                 role='ai', 
-                 content=f"{summary_text} (Viz Error: {viz_error})", 
-                 sql_executed=sql_query,
-                 data_headers=data_headers,
-                 viz_code=viz_code
-             )
-             return JsonResponse({
+            Message.objects.create(
+                conversation=conversation,
+                role='ai', 
+                content=f"{summary_text} (Viz Error: {viz_error})", 
+                sql_executed=sql_query,
+                data_headers=data_headers,
+                viz_code=viz_code
+            )
+            return JsonResponse({
                 "conversation_id": str(conversation.id),
                 "sql": sql_query,
                 "summary": f"{summary_text} (Note: Visualization failed: {viz_error})",
@@ -357,12 +684,12 @@ def chat_view(request):
             })
             
         Message.objects.create(
-             conversation=conversation,
-             role='ai', 
-             content=summary_text, 
-             sql_executed=sql_query,
-             data_headers=data_headers,
-             viz_code=viz_code
+            conversation=conversation,
+            role='ai', 
+            content=summary_text, 
+            sql_executed=sql_query,
+            data_headers=data_headers,
+            viz_code=viz_code
         )
         
         return JsonResponse({
@@ -378,6 +705,6 @@ def chat_view(request):
         return JsonResponse({
             "conversation_id": str(conversation.id),
             "sql": sql_query,
-            "summary": f"Data retrieved, but viz generation failed: {str(e)}",
+            "summary": f"Data retrieved, but processing failed: {str(e)}",
             "plotly_json": None
         })

@@ -4,5 +4,6 @@ openai
 pandas
 plotly
 python-dotenv
-numpy<2
+numpy==1.26.4
 statsmodels
+scikit-learn
