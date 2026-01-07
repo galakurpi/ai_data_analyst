@@ -67,26 +67,24 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-if os.getenv('DATABASE_URL'):
-    import dj_database_url  # noqa
-    DATABASES = {
-        'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
+# Multi-database setup:
+# - 'default': Local database for chat history and sales data
+# - 'auth_db': Shared CRM database for user authentication (optional)
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'sales.db',
     }
-elif os.getenv('DATABASE_PATH'):
-    # Use shared database (e.g., with voice_crm)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': os.getenv('DATABASE_PATH'),
-        }
+}
+
+# If AUTH_DATABASE_PATH is set, use shared auth database
+if os.getenv('AUTH_DATABASE_PATH'):
+    DATABASES['auth_db'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': os.getenv('AUTH_DATABASE_PATH'),
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'sales.db',
-        }
-    }
+    DATABASE_ROUTERS = ['config.db_router.AuthRouter']
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
