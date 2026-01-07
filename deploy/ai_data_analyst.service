@@ -1,0 +1,22 @@
+[Unit]
+Description=AI Data Analyst Gunicorn Daemon
+Requires=ai_data_analyst.socket
+After=network.target
+
+[Service]
+Type=notify
+User=www-data
+Group=www-data
+RuntimeDirectory=ai_data_analyst
+WorkingDirectory=/var/www/ai_data_analyst/backend
+ExecStart=/var/www/ai_data_analyst/backend/venv/bin/gunicorn \
+          --config /var/www/ai_data_analyst/backend/gunicorn.conf.py \
+          config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+EnvironmentFile=/var/www/ai_data_analyst/backend/.env
+
+[Install]
+WantedBy=multi-user.target

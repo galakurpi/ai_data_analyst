@@ -1,0 +1,9 @@
+[Unit]
+Description=AI Data Analyst Gunicorn Socket
+
+[Socket]
+ListenStream=/run/ai_data_analyst/gunicorn.sock
+SocketUser=www-data
+
+[Install]
+WantedBy=sockets.target

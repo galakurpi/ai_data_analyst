@@ -515,8 +515,9 @@ def chat_view(request):
     sql_query = ""
     df = pd.DataFrame()
     final_error = None
+    empty_result_attempts = []
     
-    for _ in range(max_retries):
+    for attempt in range(max_retries):
         try:
             sql_query = generate_sql(user_query, schema, history, error_history)
             sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
@@ -526,10 +527,23 @@ def chat_view(request):
             if final_error:
                 error_history.append({"sql": sql_query, "error": final_error})
                 continue
+            elif df.empty:
+                # Query executed successfully but returned no results - try again with different approach
+                empty_result_attempts.append(sql_query)
+                error_history.append({
+                    "sql": sql_query, 
+                    "error": "Query executed successfully but returned no results. Try a less restrictive query or check if the data exists."
+                })
+                # Continue to next retry attempt
+                continue
             else:
+                # Success - we have data!
                 break
         except Exception as e:
             final_error = str(e)
+            error_history.append({"sql": sql_query, "error": str(e)})
+            if attempt < max_retries - 1:
+                continue
             break
             
     if final_error:
@@ -541,12 +555,82 @@ def chat_view(request):
         }, status=400)
         
     if df.empty:
-        Message.objects.create(conversation=conversation, role='ai', content="No results found.", sql_executed=sql_query)
+        # Generate a more helpful message explaining why no results were found
+        try:
+            # Try to understand why the query returned no results
+            # Check if there's data in the tables being queried
+            conn = get_db_connection()
+            table_info = ""
+            try:
+                # Extract table names from SQL (simple heuristic)
+                tables_in_query = []
+                cursor = conn.cursor()
+                for table in ['products', 'customers', 'orders', 'order_items']:
+                    if table in sql_query.lower():
+                        try:
+                            cursor.execute(f"SELECT COUNT(*) as count FROM {table}")
+                            count = cursor.fetchone()['count']
+                            tables_in_query.append(f"{table} ({count} rows)")
+                        except:
+                            pass  # Skip if table doesn't exist or query fails
+                
+                table_info = f"Tables queried: {', '.join(tables_in_query)}" if tables_in_query else ""
+            except:
+                table_info = ""
+            finally:
+                conn.close()
+            
+            # Generate a helpful message using AI
+            retry_info = ""
+            if len(empty_result_attempts) > 1:
+                retry_info = f"\n\nNote: Tried {len(empty_result_attempts)} different query approaches, all returned no results."
+            
+            empty_result_prompt = f"""
+            The user asked: "{user_query}"
+            
+            The SQL query executed successfully but returned no results:
+            {sql_query}
+            
+            {table_info if table_info else ""}
+            {retry_info}
+            
+            Provide a helpful explanation to the user about why no results were found. 
+            Be specific - mention if the query might be too restrictive, if the data doesn't exist, 
+            or suggest what they might try instead. Keep it concise (2-3 sentences).
+            """
+            
+            input_items = build_conversation_input(
+                "You are a helpful data analyst assistant. Explain why queries return no results in a friendly, actionable way.",
+                history,
+                empty_result_prompt
+            )
+            
+            response = client.responses.create(
+                model="gpt-5.2",
+                input=input_items,
+                reasoning={"effort": "low"},
+                text={"verbosity": "low"}
+            )
+            
+            result = ""
+            for item in response.output:
+                if item.type == "message":
+                    for content in item.content:
+                        if content.type == "output_text":
+                            result = content.text
+                            break
+            
+            helpful_message = result.strip() if result.strip() else "Query executed successfully but returned no results. The query may be too restrictive or the requested data may not exist in the database."
+        except Exception as e:
+            helpful_message = f"Query executed successfully but returned no results. SQL: {sql_query}"
+        
+        Message.objects.create(conversation=conversation, role='ai', content=helpful_message, sql_executed=sql_query)
         return JsonResponse({
             "conversation_id": str(conversation.id),
             "sql": sql_query, 
-            "summary": "Query executed successfully but returned no results.",
-            "plotly_json": None
+            "summary": helpful_message,
+            "plotly_json": None,
+            "retries_attempted": len(empty_result_attempts) if empty_result_attempts else 0
         })
     
     # =========================================================================

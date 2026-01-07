@@ -45,11 +45,27 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+**Set up environment variables:**
+
+Create a `.env` file in the `backend` directory with your OpenAI API key:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
 **Apply database migrations:**
 
 ```bash
 python manage.py migrate
 ```
+
+**Seed the database with demo data (optional, for testing):**
+
+```bash
+python seed.py
+```
+
+This will create a `sales.db` SQLite database with sample sales data including products, customers, orders, and order items. The data includes realistic patterns for testing RFM analysis, trend analysis, product performance, customer clustering, and more.
 
 **Run the development server:**
 
