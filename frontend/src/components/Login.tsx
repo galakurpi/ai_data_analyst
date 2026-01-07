@@ -89,7 +89,7 @@ export function Login({ onLogin, apiBase }: LoginProps) {
 
           <Button
             type="submit"
-            className="w-full h-12"
+            className="w-full h-12 cursor-pointer"
             disabled={isLoading}
           >
             {isLoading ? "Signing in..." : "Sign in"}

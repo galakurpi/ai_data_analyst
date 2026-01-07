@@ -131,7 +131,7 @@ export function Chat({ user, onLogout, apiBase }: ChatProps) {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground">{user.email}</span>
-            <Button variant="outline" size="sm" onClick={onLogout}>
+            <Button variant="outline" size="sm" onClick={onLogout} className="cursor-pointer">
               Logout
             </Button>
           </div>
