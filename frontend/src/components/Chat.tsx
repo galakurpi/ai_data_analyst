@@ -19,7 +19,19 @@ interface Message {
   timestamp?: Date
 }
 
-export function Chat() {
+interface User {
+  id: number
+  username: string
+  email: string
+}
+
+interface ChatProps {
+  user: User
+  onLogout: () => void
+  apiBase: string
+}
+
+export function Chat({ user, onLogout, apiBase }: ChatProps) {
   const [messages, setMessages] = React.useState<Message[]>([])
   const [input, setInput] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
@@ -45,11 +57,12 @@ export function Chat() {
     setIsLoading(true)
 
     try {
-      const response = await fetch("http://localhost:8000/api/chat", {
+      const response = await fetch(`${apiBase}/api/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         body: JSON.stringify({
           query,
           conversation_id: conversationId,
@@ -107,17 +120,25 @@ export function Chat() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-background">
-      {/* Header with title */}
+      {/* Header with title and logout */}
       <div className="border-b border-border px-4 py-4">
-        <div className="mx-auto max-w-4xl flex items-center gap-3">
-          <HugeiconsIcon 
-            icon={ChartIcon} 
-            strokeWidth={2} 
-            className="size-7 text-primary" 
-          />
-          <h1 className="text-2xl font-bold text-foreground">
-            AI data Analyst
-          </h1>
+        <div className="mx-auto max-w-4xl flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <HugeiconsIcon 
+              icon={ChartIcon} 
+              strokeWidth={2} 
+              className="size-7 text-primary" 
+            />
+            <h1 className="text-2xl font-bold text-foreground">
+              AI Data Analyst
+            </h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">{user.email}</span>
+            <Button variant="outline" size="sm" onClick={onLogout}>
+              Logout
+            </Button>
+          </div>
         </div>
       </div>
       {messages.length === 0 ? (

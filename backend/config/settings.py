@@ -42,6 +42,7 @@ MIDDLEWARE = [
 
 # CORS settings
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(',')
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = 'config.urls'
 
@@ -67,9 +68,17 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 if os.getenv('DATABASE_URL'):
-    import dj_database_url
+    import dj_database_url  # noqa
     DATABASES = {
         'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
+    }
+elif os.getenv('DATABASE_PATH'):
+    # Use shared database (e.g., with voice_crm)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': os.getenv('DATABASE_PATH'),
+        }
     }
 else:
     DATABASES = {
@@ -127,3 +136,5 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    CSRF_COOKIE_SAMESITE = 'Lax'

@@ -5,6 +5,8 @@ import numpy as np
 import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth import authenticate, login, logout
 from django.conf import settings
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -792,3 +794,74 @@ def chat_view(request):
             "summary": f"Data retrieved, but processing failed: {str(e)}",
             "plotly_json": None
         })
+
+
+# =============================================================================
+# AUTH VIEWS - Uses shared database with voice_crm
+# =============================================================================
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def login_view(request):
+    """Login with email/username and password."""
+    try:
+        data = json.loads(request.body)
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        
+        if not email or not password:
+            return JsonResponse({'error': 'Email and password required'}, status=400)
+        
+        # Try to authenticate with email as username first
+        user = authenticate(request, username=email, password=password)
+        
+        # If that fails, try to find user by email
+        if not user:
+            from django.contrib.auth.models import User
+            try:
+                user_obj = User.objects.get(email=email)
+                user = authenticate(request, username=user_obj.username, password=password)
+            except User.DoesNotExist:
+                pass
+        
+        if user is not None:
+            login(request, user)
+            return JsonResponse({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email
+                }
+            })
+        else:
+            return JsonResponse({'error': 'Invalid credentials'}, status=401)
+            
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def logout_view(request):
+    """Logout the current user."""
+    logout(request)
+    return JsonResponse({'success': True})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def check_auth_view(request):
+    """Check if user is authenticated."""
+    if request.user.is_authenticated:
+        return JsonResponse({
+            'authenticated': True,
+            'user': {
+                'id': request.user.id,
+                'username': request.user.username,
+                'email': request.user.email
+            }
+        })
+    return JsonResponse({'authenticated': False})
