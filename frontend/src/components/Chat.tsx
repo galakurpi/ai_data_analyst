@@ -106,10 +106,6 @@ export function Chat({ user, onLogout, apiBase }: ChatProps) {
     sendMessage(input)
   }
 
-  const handleSendClick = () => {
-    sendMessage(input)
-  }
-
   // Suggested questions based on backend analysis types
   const suggestedQuestions = [
     "Who are my best customers?",
