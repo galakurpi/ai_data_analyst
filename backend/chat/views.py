@@ -268,6 +268,8 @@ def generate_viz_code(df_head_csv, user_query, history, analysis_context=None):
     3. It MUST return `fig.to_json()`.
     4. Do NOT include any imports inside the generated code (assume `import plotly.express as px` is already done).
     5. Return ONLY the Python code. No markdown, no explanations.
+    7. Do NOT use `px.pandas` — use the `pd` variable (pandas) or work directly with the DataFrame `df`.
+    8. Do NOT access `px.data` or any `px` attributes other than chart functions (px.line, px.bar, px.scatter, etc).
     6. Choose the BEST chart type (bar, line, scatter, pie, heatmap, etc.) based on the data and context.
     
     Think carefully about:
